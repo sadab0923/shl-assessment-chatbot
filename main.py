@@ -1,96 +1,45 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
-import os
-import google.generativeai as genai
 
-# ---------------------------------------------------
-# GEMINI CONFIG
-# ---------------------------------------------------
-
-genai.configure(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
-
-# ---------------------------------------------------
-# FASTAPI APP
-# ---------------------------------------------------
 
 app = FastAPI()
 
-# ---------------------------------------------------
-# SHL CATALOG
-# ---------------------------------------------------
 
-SHL_CATALOG = [
-
+# Sample SHL catalog
+catalog = [
     {
         "name": "Java 8 (New)",
         "url": "https://www.shl.com/solutions/products/product-catalog/view/java-8-new/",
         "test_type": "K",
-        "skills": [
-            "java",
-            "backend",
-            "developer",
-            "spring",
-            "microservices"
-        ]
+        "skills": ["java", "spring", "backend", "developer"]
     },
-
     {
         "name": "Python",
         "url": "https://www.shl.com/solutions/products/product-catalog/view/python/",
         "test_type": "K",
-        "skills": [
-            "python",
-            "backend",
-            "engineer",
-            "django",
-            "flask"
-        ]
+        "skills": ["python", "django", "flask", "backend"]
     },
-
     {
         "name": "OPQ32r",
         "url": "https://www.shl.com/solutions/products/product-catalog/view/opq32r/",
         "test_type": "P",
-        "skills": [
-            "personality",
-            "leadership",
-            "behavioral",
-            "manager"
-        ]
+        "skills": ["personality", "leadership", "behavioral"]
     },
-
     {
         "name": "Verify Interactive Numerical Reasoning",
         "url": "https://www.shl.com/solutions/products/product-catalog/view/verify-interactive-numerical-reasoning/",
         "test_type": "A",
-        "skills": [
-            "analytical",
-            "numerical",
-            "reasoning",
-            "data"
-        ]
+        "skills": ["numerical", "analytical", "reasoning"]
     },
-
     {
         "name": "Sales Solution",
         "url": "https://www.shl.com/solutions/products/product-catalog/view/sales-solution/",
         "test_type": "S",
-        "skills": [
-            "sales",
-            "business development",
-            "client handling",
-            "communication"
-        ]
+        "skills": ["sales", "communication", "client"]
     }
-
 ]
 
-# ---------------------------------------------------
-# REQUEST MODELS
-# ---------------------------------------------------
 
 class Message(BaseModel):
     role: str
@@ -100,55 +49,108 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
-# ---------------------------------------------------
-# ROOT ENDPOINT
-# ---------------------------------------------------
 
 @app.get("/")
-def root():
-
+def home():
     return {
         "message": "SHL Assessment Chatbot API is running"
     }
 
-# ---------------------------------------------------
-# HEALTH ENDPOINT
-# ---------------------------------------------------
 
 @app.get("/health")
 def health():
-
     return {
         "status": "ok"
     }
 
-# ---------------------------------------------------
-# CHAT ENDPOINT
-# ---------------------------------------------------
 
-@app.post("/chat")
-def chat(request: ChatRequest):
+def is_off_topic(query):
 
-    latest_message = request.messages[-1].content.lower()
-
-    # ---------------------------------------------------
-    # OFF-TOPIC REFUSAL
-    # ---------------------------------------------------
-
-    off_topic_keywords = [
+    blocked_topics = [
         "weather",
         "movie",
         "cricket",
         "ipl",
         "bitcoin",
         "politics",
-        "relationship",
-        "legal advice",
-        "football",
-        "instagram"
+        "instagram",
+        "football"
     ]
 
-    if any(word in latest_message for word in off_topic_keywords):
+    for word in blocked_topics:
+        if word in query:
+            return True
+
+    return False
+
+
+def needs_clarification(query):
+
+    if len(query.split()) < 3:
+        return True
+
+    vague_queries = [
+        "assessment",
+        "test",
+        "job",
+        "hiring"
+    ]
+
+    return query in vague_queries
+
+
+def find_recommendations(query):
+
+    results = []
+
+    for item in catalog:
+
+        matched = False
+
+        for skill in item["skills"]:
+
+            if skill in query:
+                matched = True
+                break
+
+        if matched:
+
+            results.append({
+                "name": item["name"],
+                "url": item["url"],
+                "test_type": item["test_type"]
+            })
+
+    # add personality test if requested
+    if "personality" in query or "leadership" in query:
+
+        for item in catalog:
+
+            if item["test_type"] == "P":
+
+                already_added = any(
+                    r["name"] == item["name"]
+                    for r in results
+                )
+
+                if not already_added:
+
+                    results.append({
+                        "name": item["name"],
+                        "url": item["url"],
+                        "test_type": item["test_type"]
+                    })
+
+    return results[:10]
+
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+
+    query = request.messages[-1].content.lower()
+
+    # refuse off-topic questions
+    if is_off_topic(query):
 
         return {
             "reply": "I can only help with SHL assessment recommendations.",
@@ -156,98 +158,29 @@ def chat(request: ChatRequest):
             "end_of_conversation": False
         }
 
-    # ---------------------------------------------------
-    # VAGUE QUERY CLARIFICATION
-    # ---------------------------------------------------
-
-    if len(latest_message.split()) < 3:
+    # ask follow-up for vague queries
+    if needs_clarification(query):
 
         return {
-            "reply": "Can you share the role, required skills, or seniority level you are hiring for?",
+            "reply": "Can you share the role, skills, or experience level you are hiring for?",
             "recommendations": [],
             "end_of_conversation": False
         }
 
-    # ---------------------------------------------------
-    # PERSONALITY TEST REFINEMENT
-    # ---------------------------------------------------
+    recommendations = find_recommendations(query)
 
-    personality_required = (
-        "personality" in latest_message
-        or "leadership" in latest_message
-        or "behavioral" in latest_message
-    )
-
-    recommendations = []
-
-    # ---------------------------------------------------
-    # RECOMMENDATION ENGINE
-    # ---------------------------------------------------
-
-    for item in SHL_CATALOG:
-
-        matched = False
-
-        for skill in item["skills"]:
-
-            if skill.lower() in latest_message:
-                matched = True
-
-        if matched:
-
-            recommendations.append({
-                "name": item["name"],
-                "url": item["url"],
-                "test_type": item["test_type"]
-            })
-
-    # ---------------------------------------------------
-    # ADD PERSONALITY TESTS
-    # ---------------------------------------------------
-
-    if personality_required:
-
-        for item in SHL_CATALOG:
-
-            if item["test_type"] == "P":
-
-                already_exists = any(
-                    r["name"] == item["name"]
-                    for r in recommendations
-                )
-
-                if not already_exists:
-
-                    recommendations.append({
-                        "name": item["name"],
-                        "url": item["url"],
-                        "test_type": item["test_type"]
-                    })
-
-    # ---------------------------------------------------
-    # LIMIT MAX 10
-    # ---------------------------------------------------
-
-    recommendations = recommendations[:10]
-
-    # ---------------------------------------------------
-    # RETURN RECOMMENDATIONS
-    # ---------------------------------------------------
-
+    # return recommendations
     if recommendations:
 
         return {
-            "reply": f"I found {len(recommendations)} SHL assessments matching your hiring requirements.",
+            "reply": f"I found {len(recommendations)} SHL assessments matching your requirement.",
             "recommendations": recommendations,
             "end_of_conversation": False
         }
 
-    # ---------------------------------------------------
-    # SAFE FALLBACK
-    # ---------------------------------------------------
-
+    # fallback response
     return {
-        "reply": "Please provide more details about the role, required skills, or assessment type.",
+        "reply": "I could not find a matching SHL assessment. Please provide more details.",
         "recommendations": [],
         "end_of_conversation": False
     }

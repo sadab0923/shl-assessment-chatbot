@@ -1,52 +1,86 @@
+import json
 import requests
 from bs4 import BeautifulSoup
-import json
+
 
 BASE_URL = "https://www.shl.com/solutions/products/product-catalog/"
 
 
-def scrape_catalog():
-    response = requests.get(BASE_URL)
+def get_catalog_page():
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    response = requests.get(BASE_URL, headers=headers)
+
+    if response.status_code != 200:
+        print("Failed to fetch catalog")
+        return None
+
+    return response.text
+
+
+def extract_assessments(html):
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    links = soup.find_all("a")
 
     assessments = []
+    visited_urls = set()
 
-    cards = soup.find_all("a")
+    for link in links:
 
-    for card in cards:
-        href = card.get("href")
+        href = link.get("href")
 
-        if href and "/products/product-catalog/view/" in href:
+        if not href:
+            continue
 
-            name = card.get_text(strip=True)
+        if "/products/product-catalog/view/" not in href:
+            continue
 
-            if not name:
-                continue
+        name = link.get_text(strip=True)
 
-            full_url = "https://www.shl.com" + href
+        if not name:
+            continue
 
-            assessments.append({
-                "name": name,
-                "url": full_url,
-                "description": name,
-                "test_type": "Unknown"
-            })
+        full_url = "https://www.shl.com" + href
 
-    # remove duplicates
-    unique = []
-    seen = set()
+        # skip duplicate entries
+        if full_url in visited_urls:
+            continue
 
-    for item in assessments:
-        if item["url"] not in seen:
-            unique.append(item)
-            seen.add(item["url"])
+        visited_urls.add(full_url)
 
-    with open("catalog.json", "w") as f:
-        json.dump(unique, f, indent=4)
+        assessments.append({
+            "name": name,
+            "url": full_url,
+            "description": name,
+            "test_type": "Unknown"
+        })
 
-    print(f"Saved {len(unique)} assessments")
+    return assessments
+
+
+def save_catalog(data):
+
+    with open("catalog.json", "w") as file:
+        json.dump(data, file, indent=4)
+
+    print(f"Saved {len(data)} assessments")
+
+
+def main():
+
+    html = get_catalog_page()
+
+    if not html:
+        return
+
+    assessments = extract_assessments(html)
+
+    save_catalog(assessments)
 
 
 if __name__ == "__main__":
-    scrape_catalog()
+    main()
